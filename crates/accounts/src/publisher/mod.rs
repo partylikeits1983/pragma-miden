@@ -2,6 +2,10 @@ use std::sync::Arc;
 
 use rand::Rng;
 
+use miden_assembly::{
+    ast::{Module, ModuleKind},
+    LibraryPath,
+};
 use miden_client::{
     account::{
         component::RpoFalcon512, Account, AccountStorageMode, AccountType as ClientAccountType,
@@ -13,7 +17,7 @@ use miden_client::{
 };
 use miden_objects::{
     account::{AccountBuilder, AccountComponent, AccountType, StorageSlot},
-    assembly::{DefaultSourceManager, Library, LibraryPath, Module, ModuleKind},
+    assembly::{Assembler, DefaultSourceManager},
     crypto::dsa::rpo_falcon512::PublicKey,
 };
 
@@ -21,20 +25,28 @@ use miden_lib::transaction::TransactionKernel;
 
 pub const PUBLISHER_ACCOUNT_MASM: &str = include_str!("publisher.masm");
 
-pub fn get_publisher_component_library() -> Library {
-    let source_manager = Arc::new(DefaultSourceManager::default());
-    let publisher_component_module = Module::parser(ModuleKind::Library)
-        .parse_str(
-            LibraryPath::new("publisher_component::publisher_module").unwrap(),
-            PUBLISHER_ACCOUNT_MASM,
-            &source_manager,
-        )
-        .unwrap();
+pub fn get_publisher_component_library() -> miden_objects::assembly::Library {
+    let assembler = TransactionKernel::assembler().with_debug_mode(true);
+    let component = AccountComponent::compile(
+        PUBLISHER_ACCOUNT_MASM.to_string(),
+        assembler,
+        vec![StorageSlot::empty_map()],
+    )
+    .expect("assembly should succeed");
 
-    TransactionKernel::assembler()
-        .with_debug_mode(true)
-        .assemble_library([publisher_component_module])
-        .expect("assembly should succeed")
+    // Extract the library from the component
+    component.into()
+}
+
+pub fn get_publisher_component() -> AccountComponent {
+    let assembler = TransactionKernel::assembler().with_debug_mode(true);
+    AccountComponent::compile(
+        PUBLISHER_ACCOUNT_MASM.to_string(),
+        assembler,
+        vec![StorageSlot::empty_map()],
+    )
+    .expect("assembly should succeed")
+    .with_supports_all_types()
 }
 
 pub struct PublisherAccountBuilder<'a> {
@@ -76,10 +88,7 @@ impl<'a> PublisherAccountBuilder<'a> {
     }
 
     pub async fn build(self) -> (Account, Word) {
-        let publisher_component =
-            AccountComponent::new(get_publisher_component_library(), self.storage_slots)
-                .unwrap()
-                .with_supports_all_types();
+        let publisher_component = get_publisher_component();
 
         let client = self.client.expect("build must have a Miden Client!");
         let client_rng = client.rng();
